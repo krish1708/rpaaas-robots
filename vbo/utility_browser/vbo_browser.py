@@ -1,236 +1,201 @@
 """
-VBO Browser - Visual Business Object
-Équivalent Blue Prism : Web Browser Object Page
-Toutes les actions élémentaires sur le navigateur web.
+VBO - vbo_browser.py
+====================
+Bibliothèque générique de gestion du navigateur Chrome via Selenium.
+Utilisable par n'importe quel robot du projet rpaaas-robots.
+
+Emplacement : rpaaas-robots/vbo/utility_browser/vbo_browser.py
+
+Fonctions exposées :
+    - ouvrir_navigateur(headless)              : démarre Chrome, retourne le driver
+    - naviguer(driver, url)                    : ouvre une URL et attend le chargement
+    - attendre_element(driver, by, selecteur)  : attend qu'un élément soit visible
+    - ecrire_dans_champ(driver, by, selecteur, texte) : efface et écrit dans un champ
+    - cliquer_bouton(driver, by, selecteur)    : clique sur un élément
+    - fermer_navigateur(driver)                : ferme proprement le navigateur
 """
 
+import logging
 from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
-import logging
-import time
-
-from typing import Optional, Any
-
-logger = logging.getLogger(__name__)
+from selenium.webdriver.common.by import By
+from webdriver_manager.chrome import ChromeDriverManager
 
 
-class VBOBrowser:
+# ── Logger ────────────────────────────────────────────────────────────────────
+logger = logging.getLogger("rpaaas.vbo_browser")
+
+# ── Configuration par défaut ──────────────────────────────────────────────────
+TIMEOUT = 15   # secondes d'attente maximale
+
+
+# ── Fonctions ─────────────────────────────────────────────────────────────────
+
+def ouvrir_navigateur(headless: bool = False) -> webdriver.Chrome:
     """
-    VBO Web Browser
-    Inspiré des Object Pages Blue Prism.
-    Chaque méthode = 1 action atomique réutilisable.
+    Démarre Chrome et retourne le driver Selenium.
+
+    Paramètres :
+        headless (bool) : False = fenêtre visible (défaut)
+                          True  = mode silencieux, sans interface graphique
+    Retour :
+        driver (webdriver.Chrome)
     """
+    options = Options()
 
-    def __init__(self, headless: bool = False, timeout: int = 10):
-        self.driver = None
-        self.timeout = timeout
-        self.headless = headless
+    if headless:
+        options.add_argument("--headless")
+        options.add_argument("--disable-gpu")
 
-    # ─────────────────────────────────────────
-    # INITIALISATION / FERMETURE
-    # Équivalent : "Initialise" et "Close" en BP
-    # ─────────────────────────────────────────
+    options.add_argument("--start-maximized")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
 
-    def initialise(self) -> bool:
-        """Ouvre le navigateur Chrome."""
-        try:
-            options = Options()
-            if self.headless:
-                options.add_argument("--headless")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--window-size=1920,1080")
+    service = Service(ChromeDriverManager().install())
+    driver  = webdriver.Chrome(service=service, options=options)
 
-            self.driver = webdriver.Chrome(options=options)
-            self.driver.implicitly_wait(self.timeout)
-            logger.info("[VBO Browser] Navigateur initialisé")
-            return True
-        except Exception as e:
-            logger.error(f"[VBO Browser] Erreur initialisation : {e}")
-            return False
+    logger.info("Navigateur Chrome ouvert (headless=%s)", headless)
+    return driver
 
-    def close(self) -> bool:
-        """Ferme le navigateur proprement."""
-        try:
-            if self.driver:
-                self.driver.quit()
-                self.driver = None
-            logger.info("[VBO Browser] Navigateur fermé")
-            return True
-        except Exception as e:
-            logger.error(f"[VBO Browser] Erreur fermeture : {e}")
-            return False
 
-    # ─────────────────────────────────────────
-    # NAVIGATION
-    # Équivalent : actions "Navigate" en BP
-    # ─────────────────────────────────────────
+def naviguer(driver: webdriver.Chrome, url: str) -> bool:
+    """
+    Ouvre une URL et attend que la page soit complètement chargée.
 
-    def navigate_to(self, url: str) -> bool:
-        """Navigue vers une URL."""
-        try:
-            self.driver.get(url)
-            logger.info(f"[VBO Browser] Navigation vers : {url}")
-            return True
-        except Exception as e:
-            logger.error(f"[VBO Browser] Erreur navigation : {e}")
-            return False
+    Paramètres :
+        driver (webdriver.Chrome) : driver actif
+        url    (str)              : adresse à ouvrir
+    Retour :
+        True si succès, False en cas d'erreur
+    """
+    try:
+        logger.info("Navigation vers : %s", url)
+        driver.get(url)
 
-    def get_current_url(self) -> str:
-        """Retourne l'URL courante."""
-        return self.driver.current_url
+        WebDriverWait(driver, TIMEOUT).until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
+        )
 
-    def get_page_title(self) -> str:
-        """Retourne le titre de la page."""
-        return self.driver.title
+        logger.info("Page chargée : %s", driver.title)
+        return True
 
-    def go_back(self) -> bool:
-        """Retour à la page précédente."""
-        try:
-            self.driver.back()
-            return True
-        except Exception as e:
-            logger.error(f"[VBO Browser] Erreur retour : {e}")
-            return False
+    except Exception as e:
+        logger.error("Erreur de navigation vers %s : %s", url, e)
+        return False
 
-    # ─────────────────────────────────────────
-    # INTERACTIONS ÉLÉMENTS
-    # Équivalent : actions "Click", "Type" en BP
-    # ─────────────────────────────────────────
 
-    def click_element(self, locator: str, by: By = By.XPATH) -> bool:
-        """Clique sur un élément."""
-        try:
-            element = WebDriverWait(self.driver, self.timeout).until(
-                EC.element_to_be_clickable((by, locator))
-            )
-            element.click()
-            logger.info(f"[VBO Browser] Clic sur : {locator}")
-            return True
-        except TimeoutException:
-            logger.error(f"[VBO Browser] Élément non cliquable : {locator}")
-            return False
+def attendre_element(
+    driver: webdriver.Chrome,
+    by: By,
+    selecteur: str,
+    timeout: int = TIMEOUT
+):
+    """
+    Attend qu'un élément soit visible et le retourne.
 
-    def type_text(self, locator: str, text: str, by: By = By.XPATH, clear_first: bool = True) -> bool:
-        """Saisit du texte dans un champ."""
-        try:
-            element = WebDriverWait(self.driver, self.timeout).until(
-                EC.presence_of_element_located((by, locator))
-            )
-            if clear_first:
-                element.clear()
-            element.send_keys(text)
-            logger.info(f"[VBO Browser] Saisie dans {locator} : '{text}'")
-            return True
-        except TimeoutException:
-            logger.error(f"[VBO Browser] Champ introuvable : {locator}")
-            return False
+    Paramètres :
+        driver    (webdriver.Chrome) : driver actif
+        by        (By)               : type de sélecteur (By.XPATH, By.ID, ...)
+        selecteur (str)              : valeur du sélecteur
+        timeout   (int)              : secondes d'attente (défaut : 15)
+    Retour :
+        WebElement si trouvé, None sinon
+    """
+    try:
+        element = WebDriverWait(driver, timeout).until(
+            EC.visibility_of_element_located((by, selecteur))
+        )
+        logger.info("Élément trouvé : %s", selecteur)
+        return element
 
-    def press_key(self, locator: str, key: Keys, by: By = By.XPATH) -> bool:
-        """Appuie sur une touche clavier dans un élément."""
-        try:
-            element = self.driver.find_element(by, locator)
-            element.send_keys(key)
-            return True
-        except NoSuchElementException:
-            logger.error(f"[VBO Browser] Élément introuvable pour key press : {locator}")
-            return False
+    except Exception as e:
+        logger.warning("Élément introuvable (%s) : %s", selecteur, e)
+        return None
 
-    # ─────────────────────────────────────────
-    # LECTURE DE DONNÉES
-    # Équivalent : actions "Get Text", "Get Value" en BP
-    # ─────────────────────────────────────────
 
-    def get_text(self, locator: str, by: By = By.XPATH) -> Optional[str]:
-        """Récupère le texte d'un élément."""
-        try:
-            element = WebDriverWait(self.driver, self.timeout).until(
-                EC.presence_of_element_located((by, locator))
-            )
-            text = element.text
-            logger.info(f"[VBO Browser] Texte lu : '{text}'")
-            return text
-        except TimeoutException:
-            logger.error(f"[VBO Browser] Élément introuvable pour lecture : {locator}")
-            return None
+def ecrire_dans_champ(
+    driver: webdriver.Chrome,
+    by: By,
+    selecteur: str,
+    texte: str,
+    timeout: int = TIMEOUT
+) -> bool:
+    """
+    Efface le contenu d'un champ de texte et écrit la valeur souhaitée.
 
-    def get_attribute(self, locator: str, attribute: str, by: By = By.XPATH) -> Optional[str]:
-        """Récupère la valeur d'un attribut HTML."""
-        try:
-            element = self.driver.find_element(by, locator)
-            return element.get_attribute(attribute)
-        except NoSuchElementException:
-            logger.error(f"[VBO Browser] Attribut '{attribute}' introuvable sur : {locator}")
-            return None
+    Paramètres :
+        driver    (webdriver.Chrome) : driver actif
+        by        (By)               : type de sélecteur (By.XPATH, By.ID, ...)
+        selecteur (str)              : valeur du sélecteur
+        texte     (str)              : texte à saisir dans le champ
+        timeout   (int)              : secondes d'attente (défaut : 15)
+    Retour :
+        True si succès, False en cas d'erreur
 
-    # ─────────────────────────────────────────
-    # ATTENTES / CONDITIONS
-    # Équivalent : "Wait For Element" en BP
-    # ─────────────────────────────────────────
+    Exemples :
+        ecrire_dans_champ(driver, By.XPATH, "//input[@ng-reflect-name='labelFirstName']", "John")
+        ecrire_dans_champ(driver, By.ID, "email", "john@example.com")
+    """
+    try:
+        champ = WebDriverWait(driver, timeout).until(
+            EC.element_to_be_clickable((by, selecteur))
+        )
+        champ.clear()                  # efface le contenu existant
+        champ.send_keys(texte)         # écrit le nouveau texte
+        logger.info("Champ renseigné (%s) : '%s'", selecteur, texte)
+        return True
 
-    def wait_for_element(self, locator: str, by: By = By.XPATH, timeout: int = None) -> bool:
-        """Attend qu'un élément soit présent."""
-        t = timeout or self.timeout
-        try:
-            WebDriverWait(self.driver, t).until(
-                EC.presence_of_element_located((by, locator))
-            )
-            logger.info(f"[VBO Browser] Élément trouvé : {locator}")
-            return True
-        except TimeoutException:
-            logger.warning(f"[VBO Browser] Timeout - élément absent : {locator}")
-            return False
+    except Exception as e:
+        logger.error("Impossible d'écrire dans le champ (%s) : %s", selecteur, e)
+        return False
 
-    def wait_for_url_contains(self, partial_url: str, timeout: int = None) -> bool:
-        """Attend que l'URL contienne une chaîne."""
-        t = timeout or self.timeout
-        try:
-            WebDriverWait(self.driver, t).until(
-                EC.url_contains(partial_url)
-            )
-            return True
-        except TimeoutException:
-            logger.warning(f"[VBO Browser] URL n'a pas changé vers : {partial_url}")
-            return False
 
-    def element_exists(self, locator: str, by: By = By.XPATH) -> bool:
-        """Vérifie si un élément existe sur la page."""
-        try:
-            self.driver.find_element(by, locator)
-            return True
-        except NoSuchElementException:
-            return False
+def cliquer_bouton(
+    driver: webdriver.Chrome,
+    by: By,
+    selecteur: str,
+    timeout: int = TIMEOUT
+) -> bool:
+    """
+    Attend qu'un bouton (ou n'importe quel élément cliquable) soit disponible
+    et clique dessus.
 
-    # ─────────────────────────────────────────
-    # UTILITAIRES
-    # ─────────────────────────────────────────
+    Paramètres :
+        driver    (webdriver.Chrome) : driver actif
+        by        (By)               : type de sélecteur (By.XPATH, By.ID, ...)
+        selecteur (str)              : valeur du sélecteur
+        timeout   (int)              : secondes d'attente (défaut : 15)
+    Retour :
+        True si succès, False en cas d'erreur
 
-    def take_screenshot(self, path: str) -> bool:
-        """Prend une capture d'écran."""
-        try:
-            self.driver.save_screenshot(path)
-            logger.info(f"[VBO Browser] Screenshot : {path}")
-            return True
-        except Exception as e:
-            logger.error(f"[VBO Browser] Erreur screenshot : {e}")
-            return False
+    Exemples :
+        cliquer_bouton(driver, By.XPATH, "//button[contains(text(),'Start')]")
+        cliquer_bouton(driver, By.ID, "btnSubmit")
+        cliquer_bouton(driver, By.CSS_SELECTOR, ".btn-primary")
+    """
+    try:
+        bouton = WebDriverWait(driver, timeout).until(
+            EC.element_to_be_clickable((by, selecteur))
+        )
+        bouton.click()
+        logger.info("Clic effectué sur : %s", selecteur)
+        return True
 
-    def scroll_to_element(self, locator: str, by: By = By.XPATH) -> bool:
-        """Scroll jusqu'à un élément."""
-        try:
-            element = self.driver.find_element(by, locator)
-            self.driver.execute_script("arguments[0].scrollIntoView(true);", element)
-            time.sleep(0.3)
-            return True
-        except Exception as e:
-            logger.error(f"[VBO Browser] Erreur scroll : {e}")
-            return False
+    except Exception as e:
+        logger.error("Impossible de cliquer sur (%s) : %s", selecteur, e)
+        return False
 
-    def execute_js(self, script: str) -> any:
-        """Exécute du JavaScript dans la page."""
-        return self.driver.execute_script(script)
+
+def fermer_navigateur(driver: webdriver.Chrome) -> None:
+    """
+    Ferme le navigateur et libère les ressources.
+
+    Paramètres :
+        driver (webdriver.Chrome) : driver à fermer
+    """
+    if driver:
+        driver.quit()
+        logger.info("Navigateur fermé.")
