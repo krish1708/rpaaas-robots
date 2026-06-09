@@ -3,6 +3,9 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+robots/robot_rpa_challenge/data
+robots/robot_rpa_challenge/processes/logs
+
 # C extensions
 *.so
 
@@ -11,6 +14,7 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+logs/
 downloads/
 eggs/
 .eggs/
